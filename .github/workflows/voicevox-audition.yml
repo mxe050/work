@@ -1,0 +1,57 @@
+name: VOICEVOX audition samples
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/voicevox-audition.yml"
+      - "scripts/generate_voicevox_samples.py"
+
+permissions:
+  contents: read
+
+jobs:
+  synthesize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show available disk space
+        run: df -h
+
+      - name: Start official VOICEVOX Engine
+        run: |
+          docker pull voicevox/voicevox_engine:cpu-latest
+          docker run --detach \
+            --name voicevox-engine \
+            --publish 127.0.0.1:50021:50021 \
+            voicevox/voicevox_engine:cpu-latest
+
+      - name: Generate female and male audition samples
+        env:
+          VOICEVOX_URL: http://127.0.0.1:50021
+          OUTPUT_DIR: output/voice_samples
+          SPEED_SCALE: "1.25"
+          PRE_PHONEME_LENGTH: "0.08"
+          POST_PHONEME_LENGTH: "0.08"
+        run: python3 scripts/generate_voicevox_samples.py
+
+      - name: Show generated files
+        if: always()
+        run: |
+          find output -maxdepth 3 -type f -printf '%p\t%k KB\n' 2>/dev/null || true
+          docker logs --tail 80 voicevox-engine 2>/dev/null || true
+
+      - name: Upload audition samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voicevox-audition-samples
+          path: output/voice_samples
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
