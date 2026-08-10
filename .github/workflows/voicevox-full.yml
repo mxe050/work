@@ -1,0 +1,100 @@
+name: NMA full VOICEVOX narration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/voicevox-full.yml"
+      - "payload/nma_voicevox_payload.tar.gz.b64"
+
+permissions:
+  contents: read
+
+jobs:
+  synthesize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Decode production payload
+        run: |
+          base64 --decode payload/nma_voicevox_payload.tar.gz.b64 > /tmp/nma_voicevox_payload.tar.gz
+          echo "504ea6306bf0e2dda0ca05b61a9ef5dbc458dd129a327c5b3bee1fe419ce4b6d  /tmp/nma_voicevox_payload.tar.gz" | sha256sum --check
+          tar -xzf /tmp/nma_voicevox_payload.tar.gz -C .
+          python3 -m py_compile scripts/nma_dialogue_parser.py scripts/generate_nma_voicevox_full.py
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from nma_dialogue_parser import build_dialogue
+          data = build_dialogue(Path('data/nma_script'))
+          assert data['segments_count'] == 640
+          assert len(data['slides']) == 50
+          print(f"Validated dialogue: {data['blocks_count']} blocks, {data['segments_count']} segments, {len(data['slides'])} slides")
+          PY
+
+      - name: Show runner resources
+        run: |
+          df -h
+          free -h
+          python3 --version
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n 2
+
+      - name: Start official VOICEVOX Engine
+        run: |
+          docker pull voicevox/voicevox_engine:cpu-latest
+          docker run --detach \
+            --name voicevox-engine \
+            --publish 127.0.0.1:50021:50021 \
+            voicevox/voicevox_engine:cpu-latest
+
+      - name: Generate complete narration and exact timings
+        env:
+          VOICEVOX_URL: http://127.0.0.1:50021
+          SOURCE_DIR: data/nma_script
+          OUTPUT_DIR: output/nma_voicevox_full
+          TEMP_DIR: output/.nma_voicevox_tmp
+        run: python3 scripts/generate_nma_voicevox_full.py
+
+      - name: Validate production output
+        run: |
+          test -s output/nma_voicevox_full/NMA_VOICEVOX_Himari_Ryusei_full_narration.m4a
+          test -s output/nma_voicevox_full/NMA_VOICEVOX_timing_manifest.json
+          test -s output/nma_voicevox_full/NMA_VOICEVOX_subtitles.srt
+          test -s output/nma_voicevox_full/NMA_VOICEVOX_subtitles.ass
+          test -s output/nma_voicevox_full/NMA_VOICEVOX_slide_timing.csv
+          cat output/nma_voicevox_full/NMA_VOICEVOX_QA_REPORT.txt
+          ffprobe -v error \
+            -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 \
+            output/nma_voicevox_full/NMA_VOICEVOX_Himari_Ryusei_full_narration.m4a
+
+      - name: Show engine log and generated files
+        if: always()
+        run: |
+          echo "--- generated files ---"
+          find output/nma_voicevox_full -maxdepth 1 -type f -printf '%f\t%k KB\n' 2>/dev/null | sort || true
+          echo "--- VOICEVOX Engine log (tail) ---"
+          docker logs --tail 100 voicevox-engine 2>/dev/null || true
+
+      - name: Upload full narration artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nma-voicevox-full-himari-ryusei
+          path: output/nma_voicevox_full
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Stop VOICEVOX Engine
+        if: always()
+        run: docker rm --force voicevox-engine 2>/dev/null || true
