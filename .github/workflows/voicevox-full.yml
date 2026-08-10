@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/voicevox-full.yml"
-      - "payload/nma_voicevox_payload.tar.gz.b64"
+      - "payload/nma_voicevox_payload.part_*"
 
 permissions:
   contents: read
@@ -20,9 +20,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Decode production payload
+      - name: Decode and validate production payload
         run: |
-          base64 --decode payload/nma_voicevox_payload.tar.gz.b64 > /tmp/nma_voicevox_payload.tar.gz
+          test "$(find payload -maxdepth 1 -name 'nma_voicevox_payload.part_*' -type f | wc -l)" -eq 5
+          cat payload/nma_voicevox_payload.part_* \
+            | tr -d '\r\n\t ' \
+            | base64 --decode \
+            > /tmp/nma_voicevox_payload.tar.gz
           echo "504ea6306bf0e2dda0ca05b61a9ef5dbc458dd129a327c5b3bee1fe419ce4b6d  /tmp/nma_voicevox_payload.tar.gz" | sha256sum --check
           tar -xzf /tmp/nma_voicevox_payload.tar.gz -C .
           python3 -m py_compile scripts/nma_dialogue_parser.py scripts/generate_nma_voicevox_full.py
