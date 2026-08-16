@@ -1,0 +1,30 @@
+name: Temporary Yahoo Finance smoke test
+
+on:
+  push:
+    branches:
+      - temp/stock-history-20260817
+    paths:
+      - ".github/workflows/temp-yahoo-smoke.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch one Tokyo ticker
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          url = 'https://query2.finance.yahoo.com/v8/finance/chart/7203.T?range=5d&interval=1d'
+          req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              data = json.load(r)
+          result = data['chart']['result'][0]
+          print('symbol=', result['meta']['symbol'])
+          print('last_timestamp=', result['timestamp'][-1])
+          print('last_close=', result['indicators']['quote'][0]['close'][-1])
+          PY
