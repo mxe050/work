@@ -96,14 +96,17 @@ jobs:
       - name: Build the panelist-facing two-speaker tutorial
         env:
           VOICEVOX_URL: http://127.0.0.1:50021
+          PYTHONUNBUFFERED: "1"
         run: |
+          set -o pipefail
           python mid_panelist_v2/build_panelist_video_v2.py \
             --assets output/captures_v2 \
             --script mid_panelist_v2/panelist_script_v2.py \
             --work output/work_v2 \
             --output output/final_v2 \
             --voicevox-url "$VOICEVOX_URL" \
-            --speed 1.17
+            --speed 1.17 \
+            2>&1 | tee output/final_v2/build_console.log
 
       - name: Validate completed video and package
         run: |
@@ -123,8 +126,38 @@ jobs:
       - name: Show diagnostics
         if: always()
         run: |
+          mkdir -p output/final_v2
+          echo "--- build console log (tail) ---"
+          tail -n 500 output/final_v2/build_console.log 2>/dev/null || true
+          echo "--- generated file manifest ---"
+          find output/work_v2 output/final_v2 -maxdepth 3 -type f -printf '%p\t%k KB\n' 2>/dev/null | sort \
+            | tee output/final_v2/work_file_manifest.txt || true
+          echo "--- disk and memory ---"
+          df -h | tee output/final_v2/disk_report.txt || true
+          free -h | tee output/final_v2/memory_report.txt || true
           echo "--- VOICEVOX Engine log (tail) ---"
-          docker logs --tail 160 voicevox-engine 2>/dev/null || true
+          docker logs --tail 200 voicevox-engine 2>&1 \
+            | tee output/final_v2/voicevox_engine_tail.log || true
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mid-panelist-v2-build-diagnostics-${{ github.run_id }}
+          path: |
+            output/final_v2/build_console.log
+            output/final_v2/work_file_manifest.txt
+            output/final_v2/disk_report.txt
+            output/final_v2/memory_report.txt
+            output/final_v2/voicevox_engine_tail.log
+            output/final_v2/QA_REPORT_v2.txt
+            output/work_v2/*.json
+            output/work_v2/*.txt
+            output/work_v2/*.log
+            output/captures_v2/capture_report_v2.json
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
 
       - name: Upload completed panelist tutorial package
         if: success()
