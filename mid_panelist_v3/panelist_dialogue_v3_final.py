@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from panelist_dialogue_v3 import DIALOGUE as _BASE_DIALOGUE
+import importlib.util
+from pathlib import Path
+
+_BASE_PATH = Path(__file__).with_name("panelist_dialogue_v3.py")
+_SPEC = importlib.util.spec_from_file_location("panelist_dialogue_v3_base", _BASE_PATH)
+if _SPEC is None or _SPEC.loader is None:
+    raise RuntimeError(f"Unable to load base dialogue: {_BASE_PATH}")
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+_BASE_DIALOGUE = _MODULE.DIALOGUE
 
 DIALOGUE = [dict(item) for item in _BASE_DIALOGUE]
 
