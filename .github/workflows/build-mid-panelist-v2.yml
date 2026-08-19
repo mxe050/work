@@ -48,6 +48,24 @@ jobs:
           ffmpeg -version | head -n 2
           python --version
 
+      - name: Decode and verify the production scripts
+        run: |
+          mkdir -p mid_panelist_v2
+          cat mid_panelist_v2/payload/build_panelist_video_v2.py.gz.b64.part_* \
+            | tr -d '\r\n\t ' \
+            | base64 --decode \
+            | gzip -dc > mid_panelist_v2/build_panelist_video_v2.py
+          cat mid_panelist_v2/payload/panelist_script_v2.py.gz.b64.part_* \
+            | tr -d '\r\n\t ' \
+            | base64 --decode \
+            | gzip -dc > mid_panelist_v2/panelist_script_v2.py
+          echo "7a8523b7d24b7a3ef2f64b580164054dbb0b73d644ec177c1e4f0030988de6c6  mid_panelist_v2/build_panelist_video_v2.py" | sha256sum --check
+          echo "a30f80a945c1d05faf338909f9d380e5e4ff8032dd54b0c3c316fc208a199ad7  mid_panelist_v2/panelist_script_v2.py" | sha256sum --check
+          python -m py_compile \
+            mid_panelist_v2/capture_sources_v2.py \
+            mid_panelist_v2/build_panelist_video_v2.py \
+            mid_panelist_v2/panelist_script_v2.py
+
       - name: Capture the live manual, detail page, and all form pages
         run: |
           mkdir -p output/captures_v2 output/work_v2 output/final_v2
