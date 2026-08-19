@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Locator, Page, sync_playwright
 
 FORM_URL = "https://forms.gle/6wD16fgubkJrzKym8"
 
@@ -31,46 +31,93 @@ def settle(page: Page, ms: int = 1800) -> None:
     page.wait_for_timeout(ms)
 
 
+def safe_text(locator: Locator) -> str:
+    try:
+        return clean(locator.inner_text(timeout=5_000))
+    except Exception:
+        return ""
+
+
+def safe_attr(locator: Locator, name: str) -> str:
+    try:
+        return locator.get_attribute(name) or ""
+    except Exception:
+        return ""
+
+
 def extract_questions(page: Page) -> list[dict[str, Any]]:
-    return page.evaluate(
-        """
-        () => {
-          const normalize = (s) => (s || '').split('\n').map(x => x.trim()).filter(Boolean).join('\n');
-          const blocks = Array.from(document.querySelectorAll('[role="listitem"]'));
-          return blocks.map((block, index) => {
-            const radios = Array.from(block.querySelectorAll('[role="radio"]')).map((x, i) => ({
-              index: i,
-              text: normalize(x.getAttribute('data-value') || x.getAttribute('aria-label') || x.innerText),
-              checked: x.getAttribute('aria-checked')
-            }));
-            const checkboxes = Array.from(block.querySelectorAll('[role="checkbox"]')).map((x, i) => ({
-              index: i,
-              text: normalize(x.getAttribute('data-answer-value') || x.getAttribute('aria-label') || x.innerText),
-              checked: x.getAttribute('aria-checked')
-            }));
-            const inputs = Array.from(block.querySelectorAll('input, textarea')).map((x, i) => ({
-              index: i,
-              type: x.getAttribute('type') || x.tagName.toLowerCase(),
-              aria: x.getAttribute('aria-label') || '',
-              placeholder: x.getAttribute('placeholder') || '',
-              value: x.value || ''
-            }));
-            return {
-              index,
-              text: normalize(block.innerText),
-              radios,
-              checkboxes,
-              inputs
-            };
-          }).filter(x => x.text || x.radios.length || x.checkboxes.length || x.inputs.length);
-        }
-        """
-    )
+    questions: list[dict[str, Any]] = []
+    blocks = page.locator('[role="listitem"]')
+    for block_index in range(blocks.count()):
+        block = blocks.nth(block_index)
+        try:
+            if not block.is_visible():
+                continue
+        except Exception:
+            pass
+
+        radios_data: list[dict[str, Any]] = []
+        radios = block.locator('[role="radio"]')
+        for i in range(radios.count()):
+            radio = radios.nth(i)
+            radios_data.append({
+                "index": i,
+                "text": clean(
+                    safe_attr(radio, "data-value")
+                    or safe_attr(radio, "aria-label")
+                    or safe_text(radio)
+                ),
+                "checked": safe_attr(radio, "aria-checked"),
+            })
+
+        checkbox_data: list[dict[str, Any]] = []
+        checkboxes = block.locator('[role="checkbox"]')
+        for i in range(checkboxes.count()):
+            checkbox = checkboxes.nth(i)
+            checkbox_data.append({
+                "index": i,
+                "text": clean(
+                    safe_attr(checkbox, "data-answer-value")
+                    or safe_attr(checkbox, "aria-label")
+                    or safe_text(checkbox)
+                ),
+                "checked": safe_attr(checkbox, "aria-checked"),
+            })
+
+        inputs_data: list[dict[str, Any]] = []
+        inputs = block.locator("input, textarea")
+        for i in range(inputs.count()):
+            input_locator = inputs.nth(i)
+            try:
+                tag = input_locator.evaluate("el => el.tagName.toLowerCase()")
+            except Exception:
+                tag = "input"
+            try:
+                value = input_locator.input_value()
+            except Exception:
+                value = ""
+            inputs_data.append({
+                "index": i,
+                "type": safe_attr(input_locator, "type") or tag,
+                "aria": safe_attr(input_locator, "aria-label"),
+                "placeholder": safe_attr(input_locator, "placeholder"),
+                "value": value,
+            })
+
+        text = safe_text(block)
+        if text or radios_data or checkbox_data or inputs_data:
+            questions.append({
+                "index": block_index,
+                "text": text,
+                "radios": radios_data,
+                "checkboxes": checkbox_data,
+                "inputs": inputs_data,
+            })
+    return questions
 
 
-def click_first_enabled(locator) -> bool:
-    count = locator.count()
-    for i in range(count):
+def click_first_enabled(locator: Locator) -> bool:
+    for i in range(locator.count()):
         item = locator.nth(i)
         try:
             if item.is_visible() and item.get_attribute("aria-disabled") != "true":
@@ -82,7 +129,15 @@ def click_first_enabled(locator) -> bool:
 
 
 def fill_current_page(page: Page) -> dict[str, int]:
-    stats = {"email": 0, "text": 0, "number": 0, "textarea": 0, "radio_groups": 0, "checkbox_blocks": 0, "dropdowns": 0}
+    stats = {
+        "email": 0,
+        "text": 0,
+        "number": 0,
+        "textarea": 0,
+        "radio_groups": 0,
+        "checkbox_blocks": 0,
+        "dropdowns": 0,
+    }
 
     for loc in page.locator('input[type="email"]').all():
         try:
@@ -127,11 +182,7 @@ def fill_current_page(page: Page) -> dict[str, int]:
             if not group.is_visible():
                 continue
             radios = group.locator('[role="radio"]')
-            selected = False
-            for j in range(radios.count()):
-                if radios.nth(j).get_attribute("aria-checked") == "true":
-                    selected = True
-                    break
+            selected = any(radios.nth(j).get_attribute("aria-checked") == "true" for j in range(radios.count()))
             if not selected and click_first_enabled(radios):
                 stats["radio_groups"] += 1
         except Exception:
@@ -171,14 +222,11 @@ def fill_current_page(page: Page) -> dict[str, int]:
 
     dropdowns = page.locator('[role="listbox"]')
     for i in range(dropdowns.count()):
-        dd = dropdowns.nth(i)
+        dropdown = dropdowns.nth(i)
         try:
-            if not dd.is_visible():
+            if not dropdown.is_visible():
                 continue
-            text = clean(dd.inner_text())
-            if text and text not in {"選択", "Choose", "Select"}:
-                continue
-            dd.click(force=True)
+            dropdown.click(force=True)
             page.wait_for_timeout(300)
             options = page.locator('[role="option"]')
             if click_first_enabled(options):
@@ -189,20 +237,19 @@ def fill_current_page(page: Page) -> dict[str, int]:
     return stats
 
 
-def find_button(page: Page, labels: list[str]):
-    selectors: list[Any] = []
+def find_button(page: Page, labels: list[str]) -> Locator | None:
     for label in labels:
-        selectors.extend([
+        candidates = [
             page.get_by_role("button", name=label, exact=True),
             page.locator('div[role="button"]').filter(has_text=label),
             page.locator("button").filter(has_text=label),
-        ])
-    for loc in selectors:
-        try:
-            if loc.count() and loc.first.is_visible():
-                return loc.first
-        except Exception:
-            pass
+        ]
+        for candidate in candidates:
+            try:
+                if candidate.count() and candidate.first.is_visible():
+                    return candidate.first
+            except Exception:
+                pass
     return None
 
 
@@ -221,8 +268,8 @@ def main() -> None:
     browser_exec = os.environ.get("BROWSER_EXECUTABLE") or None
     report: dict[str, Any] = {"source_url": FORM_URL, "pages": []}
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
             headless=True,
             executable_path=browser_exec,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--lang=ja-JP"],
@@ -283,7 +330,7 @@ def main() -> None:
         browser.close()
 
     (out / "form_audit_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    summary = []
+    summary: list[str] = []
     for entry in report["pages"]:
         summary.append(f"===== PAGE {entry['page_number']} =====")
         summary.append(entry["body_text"])
