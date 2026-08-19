@@ -1,0 +1,111 @@
+name: Build MID panelist survey tutorial v2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-mid-panelist-v2.yml"
+      - "mid_panelist_v2/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-mid-panelist-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install video, browser, and Japanese-font dependencies
+        run: |
+          timeout 180s sudo apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30
+          timeout 360s sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install -y --no-install-recommends fonts-noto-cjk ffmpeg
+          python -m pip install --disable-pip-version-check playwright pillow qrcode requests
+          BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -n "$BROWSER_BIN" ]; then
+            echo "BROWSER_EXECUTABLE=$BROWSER_BIN" >> "$GITHUB_ENV"
+            echo "Using preinstalled browser: $BROWSER_BIN"
+          else
+            timeout 360s python -m playwright install --with-deps chromium
+          fi
+          ffmpeg -version | head -n 2
+          python --version
+
+      - name: Capture the live manual, detail page, and all form pages
+        run: |
+          mkdir -p output/captures_v2 output/work_v2 output/final_v2
+          python mid_panelist_v2/capture_sources_v2.py --output output/captures_v2
+          cat output/captures_v2/capture_report_v2.json
+          find output/captures_v2 -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
+
+      - name: Start official VOICEVOX Engine
+        run: |
+          docker pull voicevox/voicevox_engine:cpu-latest
+          docker run --detach \
+            --name voicevox-engine \
+            --publish 127.0.0.1:50021:50021 \
+            voicevox/voicevox_engine:cpu-latest
+
+      - name: Build the panelist-facing two-speaker tutorial
+        env:
+          VOICEVOX_URL: http://127.0.0.1:50021
+        run: |
+          python mid_panelist_v2/build_panelist_video_v2.py \
+            --assets output/captures_v2 \
+            --script mid_panelist_v2/panelist_script_v2.py \
+            --work output/work_v2 \
+            --output output/final_v2 \
+            --voicevox-url "$VOICEVOX_URL" \
+            --speed 1.17
+
+      - name: Validate completed video and package
+        run: |
+          test -s output/final_v2/MID_panelist_survey_tutorial_Guyatt_VOICEVOX_v2.mp4
+          test -s output/final_v2/MID_panelist_survey_tutorial_v2_complete_package.zip
+          test -s output/final_v2/MID_panelist_survey_v2_subtitles.srt
+          test -s output/final_v2/MID_panelist_survey_v2_dialogue_script.txt
+          grep -q "STATUS: PASS" output/final_v2/QA_REPORT_v2.txt
+          cat output/final_v2/QA_REPORT_v2.txt
+          ffprobe -v error \
+            -show_entries format=duration,size:stream=index,codec_type,codec_name,width,height,r_frame_rate \
+            -of default=noprint_wrappers=1 \
+            output/final_v2/MID_panelist_survey_tutorial_Guyatt_VOICEVOX_v2.mp4
+          unzip -t output/final_v2/MID_panelist_survey_tutorial_v2_complete_package.zip
+          find output/final_v2 -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
+
+      - name: Show diagnostics
+        if: always()
+        run: |
+          echo "--- VOICEVOX Engine log (tail) ---"
+          docker logs --tail 160 voicevox-engine 2>/dev/null || true
+
+      - name: Upload completed panelist tutorial package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mid-panelist-survey-tutorial-v2-voicevox
+          path: output/final_v2
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Stop VOICEVOX Engine
+        if: always()
+        run: docker rm --force voicevox-engine 2>/dev/null || true
