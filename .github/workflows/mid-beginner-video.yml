@@ -1,0 +1,110 @@
+name: MID beginner tutorial video (VOICEVOX)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mid-beginner-video]
+    paths:
+      - ".github/workflows/mid-beginner-video.yml"
+      - "mid_video/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/mid-beginner-video.yml"
+      - "mid_video/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install video and browser dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-noto-cjk-extra
+          python -m pip install --upgrade pip
+          python -m pip install playwright pillow requests
+          python -m playwright install --with-deps chromium
+          ffmpeg -version | head -n 2
+          python --version
+
+      - name: Decode and validate production scripts
+        run: |
+          cat mid_video/payload/capture.py.gz.b64.part_* | tr -d '\r\n\t ' | base64 --decode | gzip -dc > mid_video/capture_pages.py
+          cat mid_video/payload/build.py.gz.b64.part_* | tr -d '\r\n\t ' | base64 --decode | gzip -dc > mid_video/build_video.py
+          echo "9b886d8c50f7a65bc4b39d104fb665476d5ae76065e3a5132417a4e928cb6992  mid_video/capture_pages.py" | sha256sum --check
+          echo "89367c212712e57687f36272ab6b1a4b47869d21af050b716d23c72435d8202d  mid_video/build_video.py" | sha256sum --check
+          python -m py_compile mid_video/capture_pages.py mid_video/build_video.py
+
+      - name: Capture the live guidance pages
+        run: |
+          mkdir -p output/captures output/final output/work
+          python mid_video/capture_pages.py --output output/captures
+          cat output/captures/capture_report.json
+          find output/captures -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
+
+      - name: Start official VOICEVOX Engine
+        run: |
+          docker pull voicevox/voicevox_engine:cpu-latest
+          docker run --detach \
+            --name voicevox-engine \
+            --publish 127.0.0.1:50021:50021 \
+            voicevox/voicevox_engine:cpu-latest
+
+      - name: Build two-speaker tutorial video
+        env:
+          VOICEVOX_URL: http://127.0.0.1:50021
+        run: |
+          python mid_video/build_video.py \
+            --assets output/captures \
+            --work output/work \
+            --output output/final \
+            --voicevox-url "$VOICEVOX_URL"
+
+      - name: Validate final deliverables
+        run: |
+          test -s output/final/MID_beginner_guide_two_speakers_VOICEVOX.mp4
+          test -s output/final/MID_beginner_guide_subtitles.srt
+          test -s output/final/MID_beginner_guide_subtitles.ass
+          test -s output/final/MID_beginner_guide_dialogue_script.txt
+          test -s output/final/MID_beginner_guide_complete_package.zip
+          cat output/final/QA_REPORT.txt
+          ffprobe -v error \
+            -show_entries format=duration,size:stream=index,codec_type,codec_name,width,height,r_frame_rate \
+            -of default=noprint_wrappers=1 \
+            output/final/MID_beginner_guide_two_speakers_VOICEVOX.mp4
+          find output/final -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
+
+      - name: Show capture and engine diagnostics
+        if: always()
+        run: |
+          echo "--- capture report ---"
+          cat output/captures/capture_report.json 2>/dev/null || true
+          echo "--- VOICEVOX Engine log (tail) ---"
+          docker logs --tail 120 voicevox-engine 2>/dev/null || true
+
+      - name: Upload completed video package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mid-beginner-guide-two-speakers-voicevox
+          path: output/final
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Stop VOICEVOX Engine
+        if: always()
+        run: docker rm --force voicevox-engine 2>/dev/null || true
