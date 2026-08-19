@@ -62,7 +62,7 @@ jobs:
           s = s.replace(old, new).replace('"-preset","medium","-crf","18"', '"-preset","fast","-crf","18"')
           p.write_text(s, encoding="utf-8")
           PY
-          echo "522b46d181a278efec82c67c678f7594b2a55dc45706f5e925ead5c9c5071fba  mid_panelist_v2/build_panelist_video_v2.py" | sha256sum --check
+          echo "f5152b371cfd66717ae60f29e115d50b6b6243c9db5015862b1e8d2703f25f26  mid_panelist_v2/build_panelist_video_v2.py" | sha256sum --check
           python -m py_compile mid_panelist_v2/capture_sources_v2.py mid_panelist_v2/build_panelist_video_v2.py mid_panelist_v2/panelist_script_v2.py
 
       - name: Capture current source pages and all form pages
