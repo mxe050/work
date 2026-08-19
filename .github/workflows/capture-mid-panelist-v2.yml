@@ -1,0 +1,58 @@
+name: Capture MID panelist video v2 sources
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mid-panelist-survey-video-v2]
+    paths:
+      - ".github/workflows/capture-mid-panelist-v2.yml"
+      - "mid_panelist_v2/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/capture-mid-panelist-v2.yml"
+      - "mid_panelist_v2/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capture-mid-panelist-v2
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install capture dependencies
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --no-install-recommends fonts-noto-cjk
+          python -m pip install --disable-pip-version-check playwright requests
+          BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -n "$BROWSER_BIN" ]; then
+            echo "BROWSER_EXECUTABLE=$BROWSER_BIN" >> "$GITHUB_ENV"
+          else
+            python -m playwright install --with-deps chromium
+          fi
+
+      - name: Capture live pages and all accessible form pages
+        run: |
+          mkdir -p output/captures_v2
+          python mid_panelist_v2/capture_sources_v2.py --output output/captures_v2
+          find output/captures_v2 -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
+
+      - name: Upload captures
+        uses: actions/upload-artifact@v4
+        with:
+          name: mid-panelist-v2-source-captures
+          path: output/captures_v2
+          if-no-files-found: error
+          retention-days: 30
