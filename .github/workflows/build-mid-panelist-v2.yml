@@ -19,81 +19,64 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
     timeout-minutes: 180
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install video, browser, and Japanese-font dependencies
+      - name: Install dependencies
         run: |
           sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
           sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          updated=0
+          ok=0
           for attempt in 1 2 3; do
-            if timeout 600s sudo apt-get update \
-              -o Acquire::Retries=5 \
-              -o Acquire::ForceIPv4=true \
-              -o Acquire::http::Timeout=60 \
-              -o Acquire::https::Timeout=60; then
-              updated=1
-              break
-            fi
-            echo "apt-get update attempt ${attempt} failed; retrying"
+            if timeout 600s sudo apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60; then ok=1; break; fi
             sleep 10
           done
-          test "$updated" -eq 1
-          timeout 600s sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
-            apt-get install -y --no-install-recommends fonts-noto-cjk ffmpeg
+          test "$ok" -eq 1
+          timeout 600s sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --no-install-recommends fonts-noto-cjk ffmpeg
           python -m pip install --disable-pip-version-check playwright pillow qrcode requests
           BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           if [ -n "$BROWSER_BIN" ]; then
             echo "BROWSER_EXECUTABLE=$BROWSER_BIN" >> "$GITHUB_ENV"
-            echo "Using preinstalled browser: $BROWSER_BIN"
           else
             timeout 360s python -m playwright install --with-deps chromium
           fi
-          ffmpeg -version | head -n 2
-          python --version
 
-      - name: Decode and verify the production scripts
+      - name: Decode, patch, and verify production scripts
         run: |
-          mkdir -p mid_panelist_v2
-          cat mid_panelist_v2/payload/build_panelist_video_v2.py.gz.b64.part_* \
-            | tr -d '\r\n\t ' \
-            | base64 --decode \
-            | gzip -dc > mid_panelist_v2/build_panelist_video_v2.py
-          cat mid_panelist_v2/payload/panelist_script_v2.py.gz.b64.part_* \
-            | tr -d '\r\n\t ' \
-            | base64 --decode \
-            | gzip -dc > mid_panelist_v2/panelist_script_v2.py
+          cat mid_panelist_v2/payload/build_panelist_video_v2.py.gz.b64.part_* | tr -d '\r\n\t ' | base64 --decode | gzip -dc > mid_panelist_v2/build_panelist_video_v2.py
+          cat mid_panelist_v2/payload/panelist_script_v2.py.gz.b64.part_* | tr -d '\r\n\t ' | base64 --decode | gzip -dc > mid_panelist_v2/panelist_script_v2.py
           echo "7a8523b7d24b7a3ef2f64b580164054dbb0b73d644ec177c1e4f0030988de6c6  mid_panelist_v2/build_panelist_video_v2.py" | sha256sum --check
           echo "a30f80a945c1d05faf338909f9d380e5e4ff8032dd54b0c3c316fc208a199ad7  mid_panelist_v2/panelist_script_v2.py" | sha256sum --check
-          python -m py_compile \
-            mid_panelist_v2/capture_sources_v2.py \
-            mid_panelist_v2/build_panelist_video_v2.py \
-            mid_panelist_v2/panelist_script_v2.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("mid_panelist_v2/build_panelist_video_v2.py")
+          s = p.read_text(encoding="utf-8")
+          old = '''def concat_video(clips: list[Path], concat_file: Path, out: Path) -> None:\n    concat_file.write_text("\\n".join([f"file '{p.as_posix()}'" for p in clips])+"\\n",encoding="utf-8")\n    run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat_file),"-c","copy",str(out)])\n'''
+          new = '''def concat_video(clips: list[Path], concat_file: Path, out: Path) -> None:\n    # ffmpeg resolves entries relative to the ffconcat file. Absolute paths avoid duplicating a relative --work prefix.\n    lines = []\n    for clip in clips:\n        resolved = clip.resolve().as_posix().replace("'", "'\\\\''")\n        lines.append(f"file '{resolved}'")\n    concat_file.write_text("\\n".join(lines)+"\\n", encoding="utf-8")\n    run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat_file),"-c","copy",str(out)])\n'''
+          if old not in s:
+              raise SystemExit("concat_video patch target not found")
+          s = s.replace(old, new).replace('"-preset","medium","-crf","18"', '"-preset","fast","-crf","18"')
+          p.write_text(s, encoding="utf-8")
+          PY
+          echo "522b46d181a278efec82c67c678f7594b2a55dc45706f5e925ead5c9c5071fba  mid_panelist_v2/build_panelist_video_v2.py" | sha256sum --check
+          python -m py_compile mid_panelist_v2/capture_sources_v2.py mid_panelist_v2/build_panelist_video_v2.py mid_panelist_v2/panelist_script_v2.py
 
-      - name: Capture the live manual, detail page, and all form pages
+      - name: Capture current source pages and all form pages
         run: |
           mkdir -p output/captures_v2 output/work_v2 output/final_v2
           python mid_panelist_v2/capture_sources_v2.py --output output/captures_v2
           cat output/captures_v2/capture_report_v2.json
-          find output/captures_v2 -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
 
       - name: Start official VOICEVOX Engine
         run: |
           docker pull voicevox/voicevox_engine:cpu-latest
-          docker run --detach \
-            --name voicevox-engine \
-            --publish 127.0.0.1:50021:50021 \
-            voicevox/voicevox_engine:cpu-latest
+          docker run -d --name voicevox-engine -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest
 
-      - name: Build the panelist-facing two-speaker tutorial
+      - name: Build panelist-facing tutorial
         env:
           VOICEVOX_URL: http://127.0.0.1:50021
           PYTHONUNBUFFERED: "1"
@@ -105,10 +88,9 @@ jobs:
             --work output/work_v2 \
             --output output/final_v2 \
             --voicevox-url "$VOICEVOX_URL" \
-            --speed 1.17 \
-            2>&1 | tee output/final_v2/build_console.log
+            --speed 1.17 2>&1 | tee output/final_v2/build_console.log
 
-      - name: Validate completed video and package
+      - name: Validate deliverables
         run: |
           test -s output/final_v2/MID_panelist_survey_tutorial_Guyatt_VOICEVOX_v2.mp4
           test -s output/final_v2/MID_panelist_survey_tutorial_v2_complete_package.zip
@@ -116,50 +98,34 @@ jobs:
           test -s output/final_v2/MID_panelist_survey_v2_dialogue_script.txt
           grep -q "STATUS: PASS" output/final_v2/QA_REPORT_v2.txt
           cat output/final_v2/QA_REPORT_v2.txt
-          ffprobe -v error \
-            -show_entries format=duration,size:stream=index,codec_type,codec_name,width,height,r_frame_rate \
-            -of default=noprint_wrappers=1 \
-            output/final_v2/MID_panelist_survey_tutorial_Guyatt_VOICEVOX_v2.mp4
+          ffprobe -v error -show_entries format=duration,size:stream=index,codec_type,codec_name,width,height,r_frame_rate -of default=noprint_wrappers=1 output/final_v2/MID_panelist_survey_tutorial_Guyatt_VOICEVOX_v2.mp4
           unzip -t output/final_v2/MID_panelist_survey_tutorial_v2_complete_package.zip
-          find output/final_v2 -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
 
-      - name: Show diagnostics
+      - name: Preserve diagnostics
         if: always()
         run: |
           mkdir -p output/final_v2
-          echo "--- build console log (tail) ---"
           tail -n 500 output/final_v2/build_console.log 2>/dev/null || true
-          echo "--- generated file manifest ---"
-          find output/work_v2 output/final_v2 -maxdepth 3 -type f -printf '%p\t%k KB\n' 2>/dev/null | sort \
-            | tee output/final_v2/work_file_manifest.txt || true
-          echo "--- disk and memory ---"
+          find output/work_v2 output/final_v2 -maxdepth 3 -type f -printf '%p\t%k KB\n' 2>/dev/null | sort | tee output/final_v2/work_file_manifest.txt || true
           df -h | tee output/final_v2/disk_report.txt || true
           free -h | tee output/final_v2/memory_report.txt || true
-          echo "--- VOICEVOX Engine log (tail) ---"
-          docker logs --tail 200 voicevox-engine 2>&1 \
-            | tee output/final_v2/voicevox_engine_tail.log || true
+          docker logs --tail 200 voicevox-engine 2>&1 | tee output/final_v2/voicevox_engine_tail.log || true
 
-      - name: Upload build diagnostics
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mid-panelist-v2-build-diagnostics-${{ github.run_id }}
           path: |
-            output/final_v2/build_console.log
+            output/final_v2/*.log
+            output/final_v2/*report.txt
             output/final_v2/work_file_manifest.txt
-            output/final_v2/disk_report.txt
-            output/final_v2/memory_report.txt
-            output/final_v2/voicevox_engine_tail.log
-            output/final_v2/QA_REPORT_v2.txt
             output/work_v2/*.json
-            output/work_v2/*.txt
-            output/work_v2/*.log
             output/captures_v2/capture_report_v2.json
           if-no-files-found: warn
           retention-days: 7
-          compression-level: 6
 
-      - name: Upload completed panelist tutorial package
+      - name: Upload completed tutorial
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -171,4 +137,4 @@ jobs:
 
       - name: Stop VOICEVOX Engine
         if: always()
-        run: docker rm --force voicevox-engine 2>/dev/null || true
+        run: docker rm -f voicevox-engine 2>/dev/null || true
