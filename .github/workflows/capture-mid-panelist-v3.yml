@@ -31,8 +31,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install browser dependencies
+      - name: Install browser and Japanese font dependencies
         run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install -y --no-install-recommends fonts-noto-cjk
+          fc-cache -f
           python -m pip install --disable-pip-version-check playwright
           BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           if [ -n "$BROWSER_BIN" ]; then
