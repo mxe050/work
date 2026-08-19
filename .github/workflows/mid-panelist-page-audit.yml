@@ -1,0 +1,54 @@
+name: MID panelist training page audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mid-panelist-training-video]
+    paths:
+      - ".github/workflows/mid-panelist-page-audit.yml"
+      - "mid_panelist_video/audit_pages.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mid-panelist-page-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install browser dependencies
+        run: |
+          python -m pip install --disable-pip-version-check playwright
+          BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -n "$BROWSER_BIN" ]; then
+            echo "BROWSER_EXECUTABLE=$BROWSER_BIN" >> "$GITHUB_ENV"
+            echo "Using preinstalled browser: $BROWSER_BIN"
+          else
+            python -m playwright install --with-deps chromium
+          fi
+
+      - name: Audit guidance pages and all Google Form pages
+        run: |
+          mkdir -p output/page_audit
+          python mid_panelist_video/audit_pages.py --output output/page_audit
+          cat output/page_audit/audit_report.json
+          find output/page_audit -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
+
+      - name: Upload page audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: mid-panelist-page-audit
+          path: output/page_audit
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
