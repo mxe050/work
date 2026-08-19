@@ -1,1 +1,1 @@
-build final panelist-facing MID survey tutorial v2 with VOICEVOX
+build final panelist-facing MID survey tutorial v2 with resilient dependencies
