@@ -43,7 +43,7 @@ def save_page(page: Page, out: Path, stem: str, full_page: bool = True) -> dict[
 
 
 def question_blocks(page: Page) -> list[dict[str, Any]]:
-    script = """
+    script = r"""
     () => {
       const blocks = Array.from(document.querySelectorAll('[role="listitem"]'));
       return blocks.map((block, index) => {
@@ -69,7 +69,6 @@ def question_blocks(page: Page) -> list[dict[str, Any]]:
 
 
 def fill_current_form_page(page: Page) -> None:
-    # Email and free-text fields.
     for locator in page.locator("input[type='email']").all():
         if locator.is_visible():
             locator.fill("panelist@example.com")
@@ -83,8 +82,6 @@ def fill_current_form_page(page: Page) -> None:
         if locator.is_visible() and not locator.input_value():
             locator.fill("練習回答")
 
-    # One answer per radio group. Selecting the first option is only for navigation;
-    # the browser is closed without ever submitting the form.
     for group in page.locator("div[role='radiogroup']").all():
         if not group.is_visible():
             continue
@@ -96,7 +93,6 @@ def fill_current_form_page(page: Page) -> None:
                     radio.click(force=True)
                 break
 
-    # Choose the first checkbox only when a checkbox question is present.
     for block in page.locator("div[role='listitem']").all():
         if not block.is_visible():
             continue
