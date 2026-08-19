@@ -1,1 +1,1 @@
-Payloads repaired, preflight verification enabled, verified builder fragments selected, and final tutorial build requested.
+Payloads repaired, preflight verification enabled, verified builder fragments selected, base workflow aligned, and final tutorial build requested.
