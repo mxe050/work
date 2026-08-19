@@ -7,6 +7,11 @@ on:
     paths:
       - ".github/workflows/mid-panelist-page-audit.yml"
       - "mid_panelist_video/audit_pages.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/mid-panelist-page-audit.yml"
+      - "mid_panelist_video/audit_pages.py"
 
 permissions:
   contents: read
