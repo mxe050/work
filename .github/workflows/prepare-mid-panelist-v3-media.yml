@@ -9,6 +9,7 @@ on:
       - "mid_panelist_v3/capture_form_v3.py"
       - "mid_panelist_v3/panelist_dialogue_v3.py"
       - "mid_panelist_v3/panelist_dialogue_v3_final.py"
+      - "mid_panelist_v3/panelist_dialogue_v3_user_revision.py"
       - "mid_panelist_v3/synthesize_voicevox_v3.py"
   pull_request:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - "mid_panelist_v3/capture_form_v3.py"
       - "mid_panelist_v3/panelist_dialogue_v3.py"
       - "mid_panelist_v3/panelist_dialogue_v3_final.py"
+      - "mid_panelist_v3/panelist_dialogue_v3_user_revision.py"
       - "mid_panelist_v3/synthesize_voicevox_v3.py"
 
 permissions:
@@ -81,12 +83,12 @@ jobs:
             --publish 127.0.0.1:50021:50021 \
             voicevox/voicevox_engine:cpu-latest
 
-      - name: Synthesize all two-speaker narration segments
+      - name: Synthesize all user-revised two-speaker narration segments
         env:
           VOICEVOX_URL: http://127.0.0.1:50021
         run: |
           python mid_panelist_v3/synthesize_voicevox_v3.py \
-            --script mid_panelist_v3/panelist_dialogue_v3_final.py \
+            --script mid_panelist_v3/panelist_dialogue_v3_user_revision.py \
             --output output/audio_v3 \
             --voicevox-url "$VOICEVOX_URL" \
             --speed 1.15
@@ -114,7 +116,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: mid-panelist-v3-prebuilt-media
+          name: mid-panelist-v3-user-revision-media
           path: |
             output/form_v3
             output/audio_v3
