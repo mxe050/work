@@ -1,0 +1,129 @@
+name: Prepare MID panelist v3 form and VOICEVOX audio
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mid-panelist-video-v3]
+    paths:
+      - ".github/workflows/prepare-mid-panelist-v3-media.yml"
+      - "mid_panelist_v3/capture_form_v3.py"
+      - "mid_panelist_v3/panelist_dialogue_v3.py"
+      - "mid_panelist_v3/panelist_dialogue_v3_final.py"
+      - "mid_panelist_v3/panelist_dialogue_v3_user_revision.py"
+      - "mid_panelist_v3/synthesize_voicevox_v3.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/prepare-mid-panelist-v3-media.yml"
+      - "mid_panelist_v3/capture_form_v3.py"
+      - "mid_panelist_v3/panelist_dialogue_v3.py"
+      - "mid_panelist_v3/panelist_dialogue_v3_final.py"
+      - "mid_panelist_v3/panelist_dialogue_v3_user_revision.py"
+      - "mid_panelist_v3/synthesize_voicevox_v3.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-mid-panelist-v3-media
+  cancel-in-progress: true
+
+jobs:
+  prepare-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg, Japanese fonts, and Python dependencies
+        run: |
+          timeout 180s sudo apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30
+          timeout 360s sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk
+          fc-cache -f
+          python -m pip install --disable-pip-version-check playwright requests
+          BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -n "$BROWSER_BIN" ]; then
+            echo "BROWSER_EXECUTABLE=$BROWSER_BIN" >> "$GITHUB_ENV"
+            echo "Using preinstalled browser: $BROWSER_BIN"
+          else
+            timeout 360s python -m playwright install --with-deps chromium
+          fi
+          ffmpeg -version | head -n 2
+          fc-match "Noto Sans CJK JP"
+
+      - name: Capture all ten Google Form pages without submitting
+        run: |
+          mkdir -p output/form_v3 output/audio_v3
+          python mid_panelist_v3/capture_form_v3.py --output output/form_v3
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('output/form_v3/form_audit_report.json').read_text(encoding='utf-8'))
+          assert len(report['pages']) == 10, len(report['pages'])
+          assert report['pages'][-1]['has_submit'] is True
+          print({'title': report['title'], 'pages': len(report['pages']), 'submitted': False})
+          PY
+
+      - name: Start official VOICEVOX Engine
+        run: |
+          docker pull voicevox/voicevox_engine:cpu-latest
+          docker run --detach \
+            --name voicevox-engine \
+            --publish 127.0.0.1:50021:50021 \
+            voicevox/voicevox_engine:cpu-latest
+
+      - name: Synthesize all user-revised two-speaker narration segments
+        env:
+          VOICEVOX_URL: http://127.0.0.1:50021
+        run: |
+          python mid_panelist_v3/synthesize_voicevox_v3.py \
+            --script mid_panelist_v3/panelist_dialogue_v3_user_revision.py \
+            --output output/audio_v3 \
+            --voicevox-url "$VOICEVOX_URL" \
+            --speed 1.15
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest=json.loads(Path('output/audio_v3/audio_manifest.json').read_text(encoding='utf-8'))
+          assert manifest['dialogue_count'] == 99, manifest['dialogue_count']
+          assert len(manifest['segments']) == 99
+          for item in manifest['segments']:
+              path=Path('output/audio_v3')/item['file']
+              assert path.exists() and path.stat().st_size > 1000, path
+          print({'dialogue_segments': 99, 'total_duration': manifest['total_duration'], 'engine': manifest['engine_version']})
+          PY
+
+      - name: Show diagnostics
+        if: always()
+        run: |
+          echo "--- VOICEVOX log tail ---"
+          docker logs --tail 160 voicevox-engine 2>/dev/null || true
+          echo "--- output files ---"
+          find output -maxdepth 3 -type f -printf '%p\t%k KB\n' | sort | tail -n 240 || true
+
+      - name: Upload form captures and normalized VOICEVOX audio
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mid-panelist-v3-user-revision-media
+          path: |
+            output/form_v3
+            output/audio_v3
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Stop VOICEVOX Engine
+        if: always()
+        run: docker rm --force voicevox-engine 2>/dev/null || true

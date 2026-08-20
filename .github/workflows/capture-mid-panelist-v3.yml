@@ -1,0 +1,63 @@
+name: Capture MID panelist v3 Google Form
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mid-panelist-video-v3]
+    paths:
+      - ".github/workflows/capture-mid-panelist-v3.yml"
+      - "mid_panelist_v3/capture_form_v3.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/capture-mid-panelist-v3.yml"
+      - "mid_panelist_v3/capture_form_v3.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capture-mid-panelist-v3
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install browser and Japanese font dependencies
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install -y --no-install-recommends fonts-noto-cjk
+          fc-cache -f
+          python -m pip install --disable-pip-version-check playwright
+          BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -n "$BROWSER_BIN" ]; then
+            echo "BROWSER_EXECUTABLE=$BROWSER_BIN" >> "$GITHUB_ENV"
+            echo "Using preinstalled browser: $BROWSER_BIN"
+          else
+            python -m playwright install --with-deps chromium
+          fi
+
+      - name: Capture every accessible form page without submitting
+        run: |
+          mkdir -p output/form_v3
+          python mid_panelist_v3/capture_form_v3.py --output output/form_v3
+          cat output/form_v3/form_audit_report.json
+          find output/form_v3 -maxdepth 1 -type f -printf '%f\t%k KB\n' | sort
+
+      - name: Upload form audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: mid-panelist-v3-form-audit
+          path: output/form_v3
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
