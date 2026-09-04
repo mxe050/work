@@ -1,0 +1,63 @@
+name: Generate EBM animated video
+
+on:
+  push:
+    branches:
+      - artifact/ebm-video-20260904
+    paths:
+      - 'video-ebm/**'
+      - '.github/workflows/generate-ebm-video.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install FFmpeg, Japanese fonts, and Python packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install --upgrade pip
+          python -m pip install edge-tts Pillow pydub
+
+      - name: Reconstruct generator
+        run: |
+          cat video-ebm/parts/part*.b64 | base64 --decode | gzip --decompress > video-ebm/generate_video.py
+          python -m py_compile video-ebm/generate_video.py
+          sha256sum video-ebm/generate_video.py
+
+      - name: Generate narration, animation, subtitles, and storyboard
+        run: |
+          python video-ebm/generate_video.py --output-dir video-ebm/output
+
+      - name: Verify deliverables
+        run: |
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height,r_frame_rate -of default=noprint_wrappers=1 'video-ebm/output/医学情報の信頼性_アニメーション解説.mp4'
+          ls -lh video-ebm/output
+
+      - name: Upload completed video package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ebm-animation-video
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          path: |
+            video-ebm/output/医学情報の信頼性_アニメーション解説.mp4
+            video-ebm/output/narration_master.mp3
+            video-ebm/output/narration_script.md
+            video-ebm/output/subtitles.srt
+            video-ebm/output/storyboard.png
