@@ -1,12 +1,11 @@
-name: Generate EBM animated video
+name: Generate EBM animated video revision 2
 
 on:
   push:
     branches:
       - artifact/ebm-video-20260904
     paths:
-      - 'video-ebm/**'
-      - '.github/workflows/generate-ebm-video.yml'
+      - 'video-ebm/render-v2.trigger'
   workflow_dispatch:
 
 permissions:
@@ -38,25 +37,27 @@ jobs:
           python -m py_compile video-ebm/generate_video.py
           sha256sum video-ebm/generate_video.py
 
-      - name: Generate narration, animation, subtitles, and storyboard
+      - name: Generate revised narration, animation, subtitles, and storyboard
         run: |
           python video-ebm/generate_video.py --output-dir video-ebm/output
 
       - name: Verify deliverables
         run: |
-          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height,r_frame_rate -of default=noprint_wrappers=1 'video-ebm/output/医学情報の信頼性_アニメーション解説.mp4'
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_name,width,height,r_frame_rate -of default=noprint_wrappers=1 'video-ebm/output/医学情報の信頼性_アニメーション動画_改訂版.mp4'
           ls -lh video-ebm/output
 
-      - name: Upload completed video package
+      - name: Upload completed revision package
         uses: actions/upload-artifact@v4
         with:
-          name: ebm-animation-video
+          name: ebm-animation-video-revision-2
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
           path: |
-            video-ebm/output/医学情報の信頼性_アニメーション解説.mp4
-            video-ebm/output/narration_master.mp3
-            video-ebm/output/narration_script.md
-            video-ebm/output/subtitles.srt
-            video-ebm/output/storyboard.png
+            video-ebm/output/医学情報の信頼性_アニメーション動画_改訂版.mp4
+            video-ebm/output/narration_master_revised.mp3
+            video-ebm/output/narration_script_revised.md
+            video-ebm/output/subtitles_revised.srt
+            video-ebm/output/storyboard_revised.png
+            video-ebm/output/qa_montage_revised.jpg
+            video-ebm/output/README_revised.txt
