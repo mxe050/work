@@ -1,0 +1,69 @@
+name: Generate revised EBM animated video
+
+on:
+  push:
+    branches:
+      - artifact/ebm-video-v2-20260904
+    paths:
+      - 'video-ebm-v2/**'
+      - '.github/workflows/generate-ebm-video-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg, Japanese fonts, and Python packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          python -m pip install --upgrade pip
+          python -m pip install edge-tts Pillow pydub
+
+      - name: Reconstruct generator
+        run: |
+          mkdir -p video-ebm-v2
+          cat video-ebm-v2/parts/part*.b64 | base64 --decode | gzip --decompress > video-ebm-v2/generate_video_v2.py
+          python -m py_compile video-ebm-v2/generate_video_v2.py
+          echo '4ae84db5cb4c1b92844f2b5b5447739dbc84b2229aa3f47370e6903d90ac9ce4  video-ebm-v2/generate_video_v2.py' | sha256sum --check
+
+      - name: Generate narration, animation, subtitles, and storyboard
+        run: |
+          python video-ebm-v2/generate_video_v2.py --output-dir video-ebm-v2/output
+
+      - name: Verify deliverables
+        run: |
+          ffprobe -v error \
+            -show_entries format=duration,size \
+            -show_entries stream=codec_name,width,height,r_frame_rate,sample_rate,channels \
+            -of default=noprint_wrappers=1 \
+            'video-ebm-v2/output/医学情報の信頼性_アニメーション動画_改訂版.mp4'
+          ls -lh video-ebm-v2/output
+
+      - name: Upload completed revised video package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ebm-animation-video-v2
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          path: |
+            video-ebm-v2/output/医学情報の信頼性_アニメーション動画_改訂版.mp4
+            video-ebm-v2/output/医学情報の信頼性_ナレーション音声_改訂版.mp3
+            video-ebm-v2/output/医学情報の信頼性_ナレーション原稿_改訂版.md
+            video-ebm-v2/output/医学情報の信頼性_字幕_改訂版.srt
+            video-ebm-v2/output/医学情報の信頼性_ストーリーボード_改訂版.png
+            video-ebm-v2/output/医学情報の信頼性_動画_README_改訂版.txt
+            video-ebm-v2/output/timing.json
