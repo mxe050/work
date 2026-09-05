@@ -1,0 +1,22 @@
+name: Prepare Python 3.13 speech alignment wheels
+on:
+  push:
+    branches: [artifact/ebm-video-revision-20260905]
+    paths: [.github/workflows/prepare-ebm-asr-py313.yml]
+permissions:
+  contents: read
+jobs:
+  wheels:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip download --only-binary=:all: --dest wheels faster-whisper
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ebm-alignment-wheels-py313
+          path: wheels/
+          compression-level: 0
+          retention-days: 1
