@@ -1,0 +1,34 @@
+name: Prepare offline speech alignment dependencies
+on:
+  push:
+    branches: [artifact/ebm-video-revision-20260905]
+    paths: [.github/workflows/prepare-ebm-asr-v6.yml]
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download public dependencies only
+        env:
+          HF_HUB_DISABLE_XET: '1'
+        run: |
+          mkdir -p bundle/wheels bundle/model
+          python -m pip download --only-binary=:all: --dest bundle/wheels faster-whisper
+          python -m pip install huggingface_hub
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          snapshot_download('Systran/faster-whisper-base', local_dir='bundle/model', allow_patterns=['config.json','model.bin','tokenizer.json','vocabulary.*','preprocessor_config.json'])
+          PY
+          rm -rf bundle/model/.cache
+          du -sh bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ebm-offline-alignment-v6
+          path: bundle/
+          compression-level: 0
+          retention-days: 1
