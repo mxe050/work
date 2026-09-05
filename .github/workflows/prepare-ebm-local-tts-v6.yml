@@ -1,0 +1,26 @@
+name: Prepare local Japanese narration engine
+on:
+  push:
+    branches: [artifact/ebm-video-revision-20260905]
+    paths: ['.github/workflows/prepare-ebm-local-tts-v6.yml']
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download official public VOICEVOX Nemo engine
+        run: |
+          mkdir -p dependency
+          curl --fail --location --retry 3 'https://github.com/VOICEVOX/voicevox_nemo_engine/releases/download/0.24.0/voicevox_engine-linux-cpu-x64-0.24.0.vvpp' -o dependency/voicevox-nemo-0.24.0.vvpp
+          sha256sum dependency/voicevox-nemo-0.24.0.vvpp > dependency/SHA256SUMS.txt
+          ls -lh dependency
+      - name: Return dependency for local narration synthesis
+        uses: actions/upload-artifact@v4
+        with:
+          name: ebm-local-tts-dependency-v6
+          path: dependency/
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
